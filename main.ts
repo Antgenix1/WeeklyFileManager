@@ -15,12 +15,14 @@ interface WeeklyFileManagerSettings {
 	rootFolder: string;
 	subfolderTemplate: string;
 	sectionSeparator: string;
+	createIndexNotes: boolean;
 }
 
 const DEFAULT_SETTINGS: WeeklyFileManagerSettings = {
 	rootFolder: "",
 	subfolderTemplate: "{{year}}/{{month_folder}}",
 	sectionSeparator: "---",
+	createIndexNotes: true,
 };
 
 const MONTH_NAMES = [
@@ -40,6 +42,16 @@ function formatISODate(d: Date): string {
 	const m = String(d.getMonth() + 1).padStart(2, "0");
 	const day = String(d.getDate()).padStart(2, "0");
 	return `${y}-${m}-${day}`;
+}
+
+function stripMdExtension(path: string): string {
+	return path.endsWith(".md") ? path.slice(0, -3) : path;
+}
+
+function basenameOf(path: string): string {
+	const withoutExt = stripMdExtension(path);
+	const lastSlash = withoutExt.lastIndexOf("/");
+	return lastSlash === -1 ? withoutExt : withoutExt.slice(lastSlash + 1);
 }
 
 function addDays(d: Date, days: number): Date {
@@ -211,14 +223,22 @@ export default class WeeklyFileManagerPlugin extends Plugin {
 			return;
 		}
 
-		await this.ensureFolder(folderPath);
+		const indexNotePath = await this.ensureFolderAndIndexNotes(folderPath);
 
-		const newContent = unfinishedSections
+		const linkLine = indexNotePath
+			? `[[${stripMdExtension(indexNotePath)}|${basenameOf(indexNotePath)}]]\n\n`
+			: "";
+		const sectionsContent = unfinishedSections
 			.map((s) => `${s}\n${this.settings.sectionSeparator}`)
 			.join("\n") + (unfinishedSections.length > 0 ? "\n" : "");
+		const newContent = linkLine + sectionsContent;
 
 		const newFile = await this.app.vault.create(filePath, newContent);
 		await this.app.workspace.getLeaf(false).openFile(newFile);
+
+		if (indexNotePath) {
+			await this.appendLinkEntry(indexNotePath, filePath, basenameOf(filePath));
+		}
 
 		new Notice(
 			unfinishedSections.length > 0
@@ -227,21 +247,67 @@ export default class WeeklyFileManagerPlugin extends Plugin {
 		);
 	}
 
-	async ensureFolder(folderPath: string) {
+	/**
+	 * Ensures every folder segment of `folderPath` exists and, when index
+	 * notes are enabled, that each subfolder segment below the root has an
+	 * index note (e.g. "ACEO/2026/09_September/09_September.md") linking up
+	 * to its parent segment's index note. This is what lets the graph view
+	 * show weekly notes connected to their month, and months connected to
+	 * their year, without depending on folder location (which the graph
+	 * ignores). The root folder itself is created but never gets an index
+	 * note. Returns the deepest segment's index note path, or null if there
+	 * were no subfolder segments or index notes are disabled.
+	 */
+	async ensureFolderAndIndexNotes(folderPath: string): Promise<string | null> {
+		const rootSegmentCount = this.settings.rootFolder.split("/").filter((s) => s.length > 0).length;
 		const segments = folderPath.split("/").filter((s) => s.length > 0);
 		let current = "";
-		for (const segment of segments) {
+		let parentIndexNotePath: string | null = null;
+
+		for (let i = 0; i < segments.length; i++) {
+			const segment = segments[i];
 			current = current ? `${current}/${segment}` : segment;
-			if (this.app.vault.getAbstractFileByPath(current)) continue;
-			try {
-				await this.app.vault.createFolder(current);
-			} catch (e) {
-				// Someone else (or Obsidian's own cache lagging behind disk)
-				// may have already created this folder between our check and
-				// this call; only re-throw if it's a genuine failure.
-				if (!this.app.vault.getAbstractFileByPath(current)) throw e;
+			if (!this.app.vault.getAbstractFileByPath(current)) {
+				try {
+					await this.app.vault.createFolder(current);
+				} catch (e) {
+					// Someone else (or Obsidian's own cache lagging behind
+					// disk) may have already created this folder between our
+					// check and this call; only re-throw if it's genuine.
+					if (!this.app.vault.getAbstractFileByPath(current)) throw e;
+				}
 			}
+
+			const isRootSegment = i < rootSegmentCount;
+			if (!this.settings.createIndexNotes || isRootSegment) continue;
+
+			const indexNotePath = normalizePath(`${current}/${segment}.md`);
+			if (!this.app.vault.getAbstractFileByPath(indexNotePath)) {
+				const linkLine = parentIndexNotePath
+					? `[[${stripMdExtension(parentIndexNotePath)}|${basenameOf(parentIndexNotePath)}]]\n`
+					: "";
+				await this.app.vault.create(indexNotePath, linkLine);
+
+				if (parentIndexNotePath) {
+					await this.appendLinkEntry(parentIndexNotePath, indexNotePath, segment);
+				}
+			}
+			parentIndexNotePath = indexNotePath;
 		}
+
+		return parentIndexNotePath;
+	}
+
+	/**
+	 * Appends a "- [[target|label]]" bullet to the given note, so index
+	 * notes keep a visible, linked list of their children (a year note
+	 * listing its months, a month note listing its weekly notes) in
+	 * addition to each child linking back up to its parent.
+	 */
+	async appendLinkEntry(notePath: string, targetPath: string, label: string) {
+		const note = this.app.vault.getAbstractFileByPath(notePath);
+		if (!(note instanceof TFile)) return;
+		await this.app.vault.append(note, `- [[${stripMdExtension(targetPath)}|${label}]]\n`);
 	}
 
 	onunload() {}
@@ -330,6 +396,24 @@ class WeeklyFileManagerSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.sectionSeparator)
 					.onChange(async (value) => {
 						this.plugin.settings.sectionSeparator = value.trim() || DEFAULT_SETTINGS.sectionSeparator;
+						await this.plugin.saveSettings();
+					})
+			);
+
+		new Setting(containerEl)
+			.setName("Link notes for the graph view")
+			.setDesc(
+				"Create a small index note per year/month folder (e.g. " +
+				"\"09_September.md\") and link each new weekly note to its " +
+				"month note, and each month note to its year note. This is " +
+				"what makes the graph view show weekly notes connected to " +
+				"their month, and months connected to their year."
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.createIndexNotes)
+					.onChange(async (value) => {
+						this.plugin.settings.createIndexNotes = value;
 						await this.plugin.saveSettings();
 					})
 			);

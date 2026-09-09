@@ -53,6 +53,18 @@ Running the command (or clicking the ribbon icon) on an open weekly note:
 5. Creates the new file and opens it. If it already exists, it's opened
    instead of being overwritten.
 
+### Graph view
+
+Obsidian's graph view only connects notes that link to each other — it has
+no notion of folder structure. So that weekly notes show up connected to
+their month, and months to their year, the plugin creates a small index
+note per subfolder (e.g. `ACEO/2026/09_September/09_September.md`,
+`ACEO/2026/2026.md`) and links each new weekly note to its month's index
+note, and each month's index note to its year's index note. These index
+notes are only created once per folder (existing ones are left alone) and
+the root folder itself never gets one. Turn this off with the **"Link
+notes for the graph view"** setting if you don't want the extra notes.
+
 ## Usage
 
 - Command palette: **"Roll over to next week"**.
@@ -77,6 +89,8 @@ is active.
   - empty → `ACEO/2026-02-02 - 2026-02-07.md` (no subfolders)
 - **Section separator** — the line used to split todo sections (default
   `---`).
+- **Link notes for the graph view** — whether to create and link the
+  year/month index notes described above (default on).
 
 ## Installing in Obsidian
 
