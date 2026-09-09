@@ -1,0 +1,10 @@
+{
+	"id": "weekly-file-manager",
+	"name": "Weekly File Manager",
+	"version": "1.0.0",
+	"minAppVersion": "1.4.10",
+	"description": "Roll over a weekly todo note into the next week's note, carrying forward unfinished todo sections.",
+	"author": "Alessandro Roethenmund",
+	"authorUrl": "",
+	"isDesktopOnly": false
+}
