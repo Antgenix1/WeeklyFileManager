@@ -213,9 +213,9 @@ export default class WeeklyFileManagerPlugin extends Plugin {
 
 		await this.ensureFolder(folderPath);
 
-		const newContent = unfinishedSections.length > 0
-			? unfinishedSections.join(`\n${this.settings.sectionSeparator}\n`) + "\n"
-			: "";
+		const newContent = unfinishedSections
+			.map((s) => `${s}\n${this.settings.sectionSeparator}`)
+			.join("\n") + (unfinishedSections.length > 0 ? "\n" : "");
 
 		const newFile = await this.app.vault.create(filePath, newContent);
 		await this.app.workspace.getLeaf(false).openFile(newFile);
